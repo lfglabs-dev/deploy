@@ -68,25 +68,18 @@ where
 }
 
 struct Logger {
-    is_remote: Arc<Mutex<bool>>,
-    local_buffer: Vec<String>,
     remote_buffer: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl Logger {
     fn new() -> Logger {
         Logger {
-            is_remote: Arc::new(Mutex::new(false)),
-            local_buffer: Vec::new(),
             remote_buffer: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
     fn log(&mut self, message: String) {
-        self.local_buffer.push(message.clone());
-        if !self.is_remote.lock().unwrap().to_owned() {
-            println!("{}", message);
-        }
+        println!("{}", message);
     }
 
     async fn start_remote_logging(&mut self, mut command: openssh::Child<&openssh::Session>) {
@@ -163,4 +156,5 @@ pub async fn execute_actions(config: Config, skip: HashSet<String>) {
             (_, _) => {}
         }
     }
+    println!("{}", "Done".bright_black());
 }
