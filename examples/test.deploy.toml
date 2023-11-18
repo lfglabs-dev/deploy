@@ -1,0 +1,26 @@
+[server]
+host = "ssh://146.59.159.230"
+user = "ubuntu"
+ssh_key = "~/.ssh/termius"
+
+[actions]
+
+[actions.stop]
+commands = [
+    "cd api.starknet.id/",
+    "sudo docker-compose -f docker-compose.prod.yml down",
+]
+
+[actions.upload_sources]
+source_folder = "~/starknetid/api.starknet.id/"
+target_folder = "~/api.starknet.id/"
+
+[actions.upload_configs]
+source_folder = "~/starknetid/api.starknet.id/backups/goerli"
+target_folder = "~/api.starknet.id/"
+
+[actions.start]
+commands = [
+    "cd api.starknet.id/",
+    "sudo docker-compose -f docker-compose.prod.yml up --build",
+]
