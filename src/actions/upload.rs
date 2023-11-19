@@ -140,8 +140,7 @@ pub async fn upload(
                     let target_path = Path::new(&target_folder).join(relative_path);
 
                     // Log the file transfer
-                    log!(
-                        logger,
+                    println!(
                         "{} '{}'",
                         "▏".bright_cyan(),
                         relative_path.display().to_string().bright_black()
@@ -210,5 +209,5 @@ pub async fn upload(
             Err(err) => println!("{} {}", "Error:".bright_red(), err),
         }
     }
-    logger.clear_buffer();
+    logger.stop_files_display().await;
 }

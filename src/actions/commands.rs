@@ -1,4 +1,7 @@
-use crate::{config::Config, actions::logger::REMOTE_TERM_SIZE};
+use crate::{
+    actions::logger::{ANSI_ESCAPE_CODE, REMOTE_TERM_SIZE},
+    config::Config,
+};
 use colored::Colorize;
 use crossterm::{
     cursor::{MoveToColumn, MoveUp},
@@ -9,6 +12,7 @@ use futures::stream::StreamExt;
 use openssh::{Session, SessionBuilder, Stdio};
 use std::{
     collections::VecDeque,
+    fs::File,
     io::Write,
     sync::{Arc, Mutex},
 };
@@ -18,7 +22,6 @@ use tokio_util::codec::{FramedRead, LinesCodec};
 
 use super::logger::Logger;
 use crate::log;
-
 
 pub async fn send_command(logger: &mut Logger, session: &Session, commands: &Vec<String>) {
     let forged_command = commands.join(" && ");
@@ -55,6 +58,7 @@ pub fn handle_terminal_streaming<R, W: Write>(
     mut reader: FramedRead<R, LinesCodec>,
     buffer: Arc<Mutex<VecDeque<String>>>,
     mut writer: W,
+    log_writer: Arc<tokio::sync::Mutex<File>>,
     notifier: Arc<Notify>,
 ) -> tokio::task::JoinHandle<()>
 where
@@ -69,6 +73,12 @@ where
                         break;
                     }
                     let line = line.unwrap().unwrap();
+                    // not declared before to avoid locking the file if it sends both in stderr and stdout
+                    let mut log_file = log_writer.lock().await;
+                    if let Err(e) = writeln!(log_file, "$ {}", ANSI_ESCAPE_CODE.replace_all(&line, "")) {
+                        eprintln!("Failed to write to log file: {}", e);
+                    }
+
                     let mut accessible_buffer = buffer.lock().unwrap();
                     let prev_buffer_length: u16 = accessible_buffer.len().try_into().unwrap();
 
