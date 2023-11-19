@@ -13,6 +13,7 @@ crossterm = "0.27.0"
 dirs = "5.0.1"
 futures = "0.3.29"
 futures-util = "0.3.29"
+ignore = "0.4.20"
 indexmap = { version = "2.1.0", features = ["serde"] }
 openssh = "0.10.1"
 openssh-sftp-client = { version = "0.14.1", features = ["openssh"] }

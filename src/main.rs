@@ -1,6 +1,6 @@
-mod action;
 mod config;
 mod finder;
+mod actions;
 use chrono::{DateTime, Local};
 use clap::Parser;
 use colored::*;
@@ -58,7 +58,7 @@ async fn main() {
     } else if let Some(config_path) = args.file {
         println!("{} {}", "Loading:".bright_black(), &config_path);
         let config = config::load(&config_path);
-        action::execute_actions(
+        actions::runner::execute_actions(
             config,
             args.skip.unwrap_or_else(Vec::new).into_iter().collect(),
         )
