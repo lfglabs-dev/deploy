@@ -1,4 +1,5 @@
 use crate::config::Config;
+use chrono::Duration;
 use colored::Colorize;
 use crossterm::{
     cursor::{MoveToColumn, MoveUp},
@@ -12,10 +13,12 @@ use std::{
     io::{stdout, Write},
     sync::{Arc, Mutex},
 };
-use tokio::io::AsyncRead;
+use tokio::io::{self, AsyncBufReadExt, BufReader};
+use tokio::sync::Notify;
+use tokio::{io::AsyncRead, time::Instant};
 use tokio_util::codec::{FramedRead, LinesCodec};
 
-const REMOTE_TERM_SIZE: usize = 10;
+const REMOTE_TERM_SIZE: usize = 5;
 
 async fn create_ssh_session(config: &Config) -> openssh::Session {
     SessionBuilder::default()
@@ -28,42 +31,52 @@ async fn create_ssh_session(config: &Config) -> openssh::Session {
 }
 
 fn handle_terminal_streaming<R, W: Write>(
-    reader: FramedRead<R, LinesCodec>,
+    mut reader: FramedRead<R, LinesCodec>,
     buffer: Arc<Mutex<VecDeque<String>>>,
     mut writer: W,
+    notifier: Arc<Notify>,
 ) -> tokio::task::JoinHandle<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
     W: Send + 'static,
 {
     tokio::spawn(async move {
-        reader
-            .for_each(|line| {
-                let line = line.unwrap();
-                let mut accessible_buffer = buffer.lock().unwrap();
-                let prev_buffer_length: u16 = accessible_buffer.len().try_into().unwrap();
+        loop {
+            tokio::select! {
+                line = reader.next() => {
+                    if line.is_none() {
+                        break;
+                    }
+                    let line = line.unwrap().unwrap();
+                    let mut accessible_buffer = buffer.lock().unwrap();
+                    let prev_buffer_length: u16 = accessible_buffer.len().try_into().unwrap();
 
-                // todo: check if the line is an update of a previous line and update in place
-                if accessible_buffer.len() == REMOTE_TERM_SIZE.into() {
-                    accessible_buffer.pop_front();
+                    // todo: check if the line is an update of a previous line and update in place
+                    if accessible_buffer.len() == REMOTE_TERM_SIZE.into() {
+                        accessible_buffer.pop_front();
+                    }
+                    accessible_buffer.push_back(line);
+                    // adding some space
+
+                    writer.execute(MoveUp(prev_buffer_length + 1)).unwrap();
+                    for line in accessible_buffer.iter() {
+                        writer
+                            .execute(Clear(ClearType::CurrentLine))
+                            .unwrap()
+                            .execute(MoveToColumn(0))
+                            .unwrap();
+                        println!("{}{}{}", "$".bright_black(), " ".clear(), line);
+                    }
+                    println!("{} Press enter to quit", "Remote console:".bright_green());
+                    writer.flush().unwrap();
                 }
-                accessible_buffer.push_back(line);
-                // adding some space
-                if prev_buffer_length > 0 {
-                    writer.execute(MoveUp(prev_buffer_length)).unwrap();
+                _ = notifier.notified() => {
+                    // If notified, break the loop and exit
+                    break;
                 }
-                for line in accessible_buffer.iter() {
-                    writer
-                        .execute(Clear(ClearType::CurrentLine))
-                        .unwrap()
-                        .execute(MoveToColumn(0))
-                        .unwrap();
-                    println!("{}{}{}", "$".bright_black(), " ".clear(), line);
-                }
-                writer.flush().unwrap();
-                futures::future::ready(())
-            })
-            .await;
+            }
+        }
+        notifier.notify_waiters();
     })
 }
 
@@ -93,13 +106,50 @@ impl Logger {
             LinesCodec::new(),
         );
 
-        let stdout_handle =
-            handle_terminal_streaming(stdout_reader, Arc::clone(&self.remote_buffer), stdout());
-        let stderr_handle =
-            handle_terminal_streaming(stderr_reader, Arc::clone(&self.remote_buffer), stdout());
+        println!("{} Connecting...", "Remote console:".bright_black());
+
+        let notifier = Arc::new(Notify::new());
+        let notifier_clone = notifier.clone();
+        let handle_notifier = tokio::spawn(async move {
+            let mut reader = BufReader::new(io::stdin()).lines();
+            let mut writer = stdout();
+            loop {
+                tokio::select! {
+                    _ = reader.next_line() => {
+                        notifier_clone.notify_waiters();
+                        writer.execute(MoveUp(2)).unwrap();
+                        break;
+                    }
+                    _ = notifier_clone.notified() => {
+                        writer.execute(MoveUp(1)).unwrap();
+                        break;
+                    }
+                }
+            }
+            writer
+                .execute(Clear(ClearType::CurrentLine))
+                .unwrap()
+                .execute(MoveToColumn(0))
+                .unwrap();
+            println!("{} Exited", "Remote console:".bright_red());
+            writer.flush().unwrap();
+        });
+
+        let stdout_handle = handle_terminal_streaming(
+            stdout_reader,
+            Arc::clone(&self.remote_buffer),
+            stdout(),
+            notifier.clone(),
+        );
+        let stderr_handle = handle_terminal_streaming(
+            stderr_reader,
+            Arc::clone(&self.remote_buffer),
+            stdout(),
+            notifier.clone(),
+        );
 
         // Await the tasks
-        let _ = tokio::try_join!(stdout_handle, stderr_handle)
+        let _ = tokio::try_join!(handle_notifier, stdout_handle, stderr_handle)
             .expect("Failed to start remote streaming");
     }
 }
@@ -113,7 +163,7 @@ macro_rules! log {
 
 pub async fn execute_actions(config: Config, skip: HashSet<String>) {
     let mut logger = Logger::new();
-
+    let start_time = Instant::now();
     for (action_name, action) in &config.actions {
         if skip.contains(action_name) {
             continue;
@@ -155,6 +205,19 @@ pub async fn execute_actions(config: Config, skip: HashSet<String>) {
             }
             (_, _) => {}
         }
+
+        session.close().await.expect("Failed to close session");
     }
-    println!("{}", "Done".bright_black());
+
+    let chrono_duration = Duration::seconds(start_time.elapsed().as_secs() as i64);
+    let hours = chrono_duration.num_hours();
+    let minutes = chrono_duration.num_minutes() % 60;
+    let seconds = chrono_duration.num_seconds() % 60;
+    let formatted_time = match (hours, minutes) {
+        (0, 0) => format!("{}s", seconds),
+        (0, _) => format!("{}m {}s", minutes, seconds),
+        (_, _) => format!("{}h {}m {}s", hours, minutes, seconds),
+    };
+
+    println!("{} finished in {}", "Done:".bright_black(), formatted_time);
 }
