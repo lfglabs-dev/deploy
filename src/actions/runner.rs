@@ -1,4 +1,4 @@
-use crate::log;
+use crate::actions::upload::upload;
 use crate::{
     actions::{
         commands::{create_ssh_session, send_command},
@@ -8,6 +8,7 @@ use crate::{
 };
 use chrono::Duration;
 use colored::Colorize;
+use openssh_sftp_client::Sftp;
 use std::collections::HashSet;
 use tokio::time::Instant;
 
@@ -26,20 +27,16 @@ pub async fn execute_actions(config: Config, skip: HashSet<String>) {
 
         match (&action.source_folder, &action.target_folder) {
             (Some(source_folder), Some(target_folder)) => {
-                log!(
-                    logger,
-                    "{}{}{}{}{}",
-                    "Uploading: '".bright_black(),
-                    source_folder.blue(),
-                    "' to '".bright_black(),
-                    target_folder.blue(),
-                    "'".bright_black()
-                );
+                let mut sftp = Sftp::from_session(session, Default::default())
+                    .await
+                    .expect("Unable to connect in SFTP");
+                upload(&config, &mut logger, &mut sftp, source_folder, target_folder).await;
+                sftp.close().await.expect("Failed to close sftp session");
             }
-            (_, _) => {}
+            (_, _) => {
+                session.close().await.expect("Failed to close ssh session");
+            }
         }
-
-        session.close().await.expect("Failed to close session");
     }
 
     let chrono_duration = Duration::seconds(start_time.elapsed().as_secs() as i64);

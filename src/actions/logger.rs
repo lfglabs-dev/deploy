@@ -14,6 +14,8 @@ use tokio::io::{self, AsyncBufReadExt, BufReader};
 use tokio::sync::Notify;
 use tokio_util::codec::{FramedRead, LinesCodec};
 
+pub const REMOTE_TERM_SIZE: usize = 5;
+
 pub struct Logger {
     remote_buffer: Arc<Mutex<VecDeque<String>>>,
 }
@@ -29,8 +31,42 @@ impl Logger {
         println!("{}", message);
     }
 
-    pub async fn start_remote_logging(&mut self, mut command: openssh::Child<&openssh::Session>) {
+    pub async fn add_uploaded_file(&mut self, file_name: String) {
+        let mut buffer = self.remote_buffer.lock().unwrap();
+        let prev_buffer_length: u16 = buffer.len().try_into().unwrap();
+
+        if buffer.len() == REMOTE_TERM_SIZE.into() {
+            buffer.pop_front();
+        }
+        buffer.push_back(format!(
+            "{} '{}'",
+            "✔".bright_green(),
+            file_name.bright_black()
+        ));
+
+        let mut writer = stdout();
+        writer.execute(MoveUp(prev_buffer_length + 1)).unwrap();
+        for line in buffer.iter() {
+            writer
+                .execute(Clear(ClearType::CurrentLine))
+                .unwrap()
+                .execute(MoveToColumn(0))
+                .unwrap();
+            println!("{}", line);
+        }
+        // clear previous temporary updating
+        writer
+            .execute(Clear(ClearType::CurrentLine))
+            .unwrap()
+            .execute(MoveToColumn(0))
+            .unwrap();
+    }
+
+    pub fn clear_buffer(&mut self) {
         self.remote_buffer = Arc::new(Mutex::new(VecDeque::new()));
+    }
+
+    pub async fn start_remote_logging(&mut self, mut command: openssh::Child<&openssh::Session>) {
         let stdout_reader = FramedRead::new(
             command.stdout().take().expect("Failed to open stdout"),
             LinesCodec::new(),
@@ -85,6 +121,9 @@ impl Logger {
         // Await the tasks
         let _ = tokio::try_join!(handle_notifier, stdout_handle, stderr_handle)
             .expect("Failed to start remote streaming");
+
+        // clear buffer
+        self.remote_buffer = Arc::new(Mutex::new(VecDeque::new()));
     }
 }
 

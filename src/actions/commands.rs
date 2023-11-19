@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::{config::Config, actions::logger::REMOTE_TERM_SIZE};
 use colored::Colorize;
 use crossterm::{
     cursor::{MoveToColumn, MoveUp},
@@ -19,7 +19,6 @@ use tokio_util::codec::{FramedRead, LinesCodec};
 use super::logger::Logger;
 use crate::log;
 
-const REMOTE_TERM_SIZE: usize = 5;
 
 pub async fn send_command(logger: &mut Logger, session: &Session, commands: &Vec<String>) {
     let forged_command = commands.join(" && ");

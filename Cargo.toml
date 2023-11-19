@@ -6,11 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-std = "1.12.0"
 chrono = "0.4.31"
 clap = { version = "4.4.8", features = ["derive"] }
 colored = "2.0.4"
 crossterm = "0.27.0"
-dirs = "5.0.1"
+dirs-next = "2.0.0"
 futures = "0.3.29"
 futures-util = "0.3.29"
 ignore = "0.4.20"
