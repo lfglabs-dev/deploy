@@ -1,7 +1,4 @@
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
-
-use super::logger::Logger;
+use crate::Logger;
 use crate::{config::Config, log};
 use async_std::fs::File;
 use async_std::io::ReadExt;
@@ -16,6 +13,8 @@ use openssh_sftp_client::fs::Fs;
 use openssh_sftp_client::Sftp;
 use std::future::Future;
 use std::io::{stdout, Error, Write};
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 
 fn expand_user_path(user_path: &str) -> String {
     if user_path.starts_with("~/") {

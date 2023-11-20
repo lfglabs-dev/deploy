@@ -1,9 +1,12 @@
+mod actions;
 mod config;
 mod finder;
-mod actions;
+mod logger;
+use crate::logger::Logger;
 use chrono::{DateTime, Local};
 use clap::Parser;
 use colored::*;
+use git2::Repository;
 use std::{fs, path::PathBuf, time::SystemTime};
 
 #[derive(Parser, Debug)]
@@ -56,9 +59,27 @@ async fn main() {
             println!("{} files found.", found.to_string().cyan());
         }
     } else if let Some(config_path) = args.file {
-        println!("{} {}", "Loading:".bright_black(), &config_path);
+        let mut logger = Logger::new();
+        log!(logger, "{} {}", "Loading:".bright_black(), &config_path);
         let config = config::load(&config_path);
+        match Repository::open(".") {
+            Ok(repo) => {
+                let head = repo.head().expect("Unable to access git HEAD");
+                let head = head
+                    .peel_to_commit()
+                    .expect("Unable to pull reference to HEAD commit");
+                log!(
+                    logger,
+                    "{} {}",
+                    "Commit hash:".bright_black(),
+                    head.id().to_string()
+                );
+            }
+            Err(_) => {}
+        }
+
         actions::runner::execute_actions(
+            &mut logger,
             config,
             args.skip.unwrap_or_else(Vec::new).into_iter().collect(),
         )

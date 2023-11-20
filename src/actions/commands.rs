@@ -1,6 +1,8 @@
+use crate::log;
+use crate::Logger;
 use crate::{
-    actions::logger::{ANSI_ESCAPE_CODE, REMOTE_TERM_SIZE},
     config::Config,
+    logger::{ANSI_ESCAPE_CODE, REMOTE_TERM_SIZE},
 };
 use colored::Colorize;
 use crossterm::{
@@ -19,9 +21,6 @@ use std::{
 use tokio::io::AsyncRead;
 use tokio::sync::Notify;
 use tokio_util::codec::{FramedRead, LinesCodec};
-
-use super::logger::Logger;
-use crate::log;
 
 pub async fn send_command(logger: &mut Logger, session: &Session, commands: &Vec<String>) {
     let forged_command = commands.join(" && ");
