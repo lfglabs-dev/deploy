@@ -1,4 +1,3 @@
-use indexmap::IndexMap;
 use serde::Deserialize;
 use std::fs;
 
@@ -13,42 +12,33 @@ macro_rules! pub_struct {
 
 pub_struct!(Clone, Deserialize; Server {
     host: String,
-    user : String,
-    ssh_key : String,
+    user: String,
+    ssh_key: String,
 });
 
-pub_struct!(Clone, Deserialize; Action {
-    commands: Option<Vec<String>>,
-    source_folder: Option<String>,
-    target_folder: Option<String>,
-});
+#[derive(Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum Action {
+    #[serde(rename = "commands")]
+    Commands { name: String, commands: Vec<String> },
+    #[serde(rename = "upload")]
+    Upload {
+        name: String,
+        source_folder: String,
+        target_folder: String,
+    },
+}
 
 pub_struct!(Clone, Deserialize; Config {
     server: Server,
-    // ordered map for stdlib
-    actions: IndexMap<String, Action>
+    actions: Vec<Action>,
 });
 
-pub fn load(config_path: &String) -> Config {
-    let file_contents = fs::read_to_string(config_path);
-    if file_contents.is_err() {
-        panic!("error: unable to read file with path \"{}\"", config_path);
-    }
+pub fn load(config_path: &str) -> Config {
+    let file_contents = fs::read_to_string(config_path).expect("error: unable to read file");
 
-    let config: Config = match toml::from_str(&file_contents.unwrap()) {
-        Ok(loaded) => loaded,
-        Err(err) => panic!("error: unable to deserialize config. {}", err),
-    };
-
-    // Validate source_folder and target_folder
-    for (action_name, action) in &config.actions {
-        match (&action.source_folder, &action.target_folder) {
-            (Some(_), None) | (None, Some(_)) => {
-                panic!("error in action {}: source_folder and target_folder must both be specified or neither", action_name);
-            }
-            _ => {}
-        }
-    }
+    let config: Config =
+        toml::from_str(&file_contents).expect("error: unable to deserialize config");
 
     config
 }

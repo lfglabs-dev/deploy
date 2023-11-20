@@ -1,4 +1,5 @@
 use crate::actions::upload::upload;
+use crate::config::Action;
 use crate::{
     actions::commands::{create_ssh_session, send_command},
     config::Config,
@@ -12,18 +13,25 @@ use tokio::time::Instant;
 
 pub async fn execute_actions(logger: &mut Logger, config: Config, skip: HashSet<String>) {
     let start_time = Instant::now();
-    for (action_name, action) in &config.actions {
-        if skip.contains(action_name) {
-            continue;
-        }
-        let session = create_ssh_session(&config).await;
-
-        if let Some(commands) = &action.commands {
-            send_command(&mut *logger, &session, commands).await;
-        }
-
-        match (&action.source_folder, &action.target_folder) {
-            (Some(source_folder), Some(target_folder)) => {
+    for action in &config.actions {
+        match action {
+            Action::Commands { name, commands } => {
+                if skip.contains(name) {
+                    continue;
+                }
+                let session = create_ssh_session(&config).await;
+                send_command(&mut *logger, &session, commands).await;
+                session.close().await.expect("Failed to close ssh session");
+            }
+            Action::Upload {
+                name,
+                source_folder,
+                target_folder,
+            } => {
+                if skip.contains(name) {
+                    continue;
+                }
+                let session = create_ssh_session(&config).await;
                 let mut sftp = Sftp::from_session(session, Default::default())
                     .await
                     .expect("Unable to connect in SFTP");
@@ -36,9 +44,6 @@ pub async fn execute_actions(logger: &mut Logger, config: Config, skip: HashSet<
                 )
                 .await;
                 sftp.close().await.expect("Failed to close sftp session");
-            }
-            (_, _) => {
-                session.close().await.expect("Failed to close ssh session");
             }
         }
     }
