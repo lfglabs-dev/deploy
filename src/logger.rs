@@ -151,10 +151,10 @@ impl Logger {
                         break;
                     }
                 },
-                Some(Ok(next_line)) = stdout_reader.next() => {
+                Some(Ok(next_line)) = stdout_reader.next().fuse() => {
                     update_console(Arc::clone(&self.remote_buffer), next_line);
                 },
-                Some(Ok(next_line)) = stderr_reader.next() => {
+                Some(Ok(next_line)) = stderr_reader.next().fuse() => {
                     update_console(Arc::clone(&self.remote_buffer), next_line);
                 }
             }
