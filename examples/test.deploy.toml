@@ -20,7 +20,7 @@ target_folder = "~/api.starknet.id/"
 [[actions]]
 type = "upload"
 name = "upload_configs"
-source_folder = "~/starknetid/api.starknet.id/backups/goerli"
+source_folder = "~/starknetid/api.starknet.id/backups/goerli-alt"
 target_folder = "~/api.starknet.id/"
 
 [[actions]]

@@ -1,10 +1,13 @@
-use crate::actions::commands::handle_terminal_streaming;
 use colored::Colorize;
 use crossterm::{
     cursor::{MoveToColumn, MoveUp},
-    terminal::{Clear, ClearType},
+    event::{Event, EventStream, KeyCode},
+    execute,
+    style::{Color, Print, SetForegroundColor},
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
     ExecutableCommand,
 };
+use futures::{future::FutureExt, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::{
@@ -14,8 +17,7 @@ use std::{
     path::Path,
     sync::{Arc, Mutex},
 };
-use tokio::io::{self, AsyncBufReadExt, BufReader};
-use tokio::sync::Notify;
+
 use tokio_util::codec::{FramedRead, LinesCodec};
 
 pub const REMOTE_TERM_SIZE: usize = 5;
@@ -121,62 +123,44 @@ impl Logger {
     }
 
     pub async fn start_remote_logging(&mut self, mut command: openssh::Child<&openssh::Session>) {
-        let stdout_reader = FramedRead::new(
+        let mut stdout_reader = FramedRead::new(
             command.stdout().take().expect("Failed to open stdout"),
             LinesCodec::new(),
         );
-        let stderr_reader = FramedRead::new(
+        let mut stderr_reader = FramedRead::new(
             command.stderr().take().expect("Failed to open stderr"),
             LinesCodec::new(),
         );
-
-        println!("{} Connecting...", "Remote console:".bright_black());
-
-        let notifier = Arc::new(Notify::new());
-        let notifier_clone = notifier.clone();
-        let handle_notifier = tokio::spawn(async move {
-            let mut reader = BufReader::new(io::stdin()).lines();
-            let mut writer = stdout();
-            loop {
-                tokio::select! {
-                    _ = reader.next_line() => {
-                        notifier_clone.notify_waiters();
-                        writer.execute(MoveUp(2)).unwrap();
+        enable_raw_mode().unwrap();
+        let mut reader = EventStream::new();
+        loop {
+            tokio::select! {
+                Some(Ok(event)) = reader.next().fuse() => {
+                    if event == Event::Key(KeyCode::Esc.into()) {
+                        execute!(
+                            stdout(),
+                            MoveUp(1),
+                            Clear(ClearType::CurrentLine),
+                            SetForegroundColor(Color::Green),
+                            Print("Remote console: "),
+                            SetForegroundColor(Color::Reset),
+                            Print("finished\n"),
+                            MoveToColumn(0),
+                        )
+                        .unwrap();
                         break;
                     }
-                    _ = notifier_clone.notified() => {
-                        writer.execute(MoveUp(1)).unwrap();
-                        break;
-                    }
+                },
+                Some(Ok(next_line)) = stdout_reader.next() => {
+                    update_console(Arc::clone(&self.remote_buffer), next_line);
+                },
+                Some(Ok(next_line)) = stderr_reader.next() => {
+                    update_console(Arc::clone(&self.remote_buffer), next_line);
                 }
             }
-            writer
-                .execute(Clear(ClearType::CurrentLine))
-                .unwrap()
-                .execute(MoveToColumn(0))
-                .unwrap();
-            println!("{} Exited", "Remote console:".bright_black());
-            writer.flush().unwrap();
-        });
+        }
 
-        let stdout_handle = handle_terminal_streaming(
-            stdout_reader,
-            Arc::clone(&self.remote_buffer),
-            stdout(),
-            Arc::clone(&self.log_file),
-            notifier.clone(),
-        );
-        let stderr_handle = handle_terminal_streaming(
-            stderr_reader,
-            Arc::clone(&self.remote_buffer),
-            stdout(),
-            Arc::clone(&self.log_file),
-            notifier.clone(),
-        );
-
-        // Await the tasks
-        let _ = tokio::try_join!(handle_notifier, stdout_handle, stderr_handle)
-            .expect("Failed to start remote streaming");
+        disable_raw_mode().unwrap();
 
         // Ensure writing logs to file
         if let Err(e) = self.log_file.lock().await.flush() {
@@ -186,6 +170,43 @@ impl Logger {
         // Clear buffer
         self.remote_buffer = Arc::new(Mutex::new(VecDeque::new()));
     }
+}
+
+fn update_console(buffer: Arc<Mutex<VecDeque<String>>>, new_line: String) {
+    let mut accessible_buffer = buffer.lock().unwrap();
+    let prev_buffer_length: u16 = accessible_buffer.len().try_into().unwrap();
+    if accessible_buffer.len() == REMOTE_TERM_SIZE.into() {
+        accessible_buffer.pop_front();
+    }
+    let mut stdout_writer = stdout();
+    accessible_buffer.push_back(new_line);
+    execute!(stdout_writer, MoveUp(prev_buffer_length + 1)).unwrap();
+    for line in accessible_buffer.iter() {
+        stdout_writer
+            .execute(Clear(ClearType::CurrentLine))
+            .unwrap();
+        stdout_writer
+            .execute(SetForegroundColor(Color::DarkGrey))
+            .unwrap();
+        stdout_writer.execute(Print("$ ")).unwrap();
+        stdout_writer
+            .execute(SetForegroundColor(Color::Reset))
+            .unwrap();
+        stdout_writer.execute(Print(line)).unwrap();
+        stdout_writer.execute(Print("\n")).unwrap();
+        stdout_writer.execute(MoveToColumn(0)).unwrap();
+    }
+    execute!(
+        stdout_writer,
+        Clear(ClearType::CurrentLine),
+        SetForegroundColor(Color::DarkGrey),
+        Print("Remote console: "),
+        SetForegroundColor(Color::Reset),
+        Print("Press ESC to quit"),
+        Print("\n"),
+        MoveToColumn(0),
+    )
+    .unwrap();
 }
 
 #[macro_export]
