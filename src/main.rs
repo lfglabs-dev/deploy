@@ -1,9 +1,10 @@
 mod actions;
 mod config;
 mod finder;
+mod info;
 mod logger;
 use crate::logger::Logger;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use clap::Parser;
 use colored::*;
 use git2::Repository;
@@ -15,6 +16,9 @@ struct Cli {
     // to find config files in the folder
     #[arg(long)]
     find: Option<String>,
+
+    #[arg(long)]
+    info: bool,
 
     // config file
     file: Option<String>,
@@ -28,7 +32,9 @@ struct Cli {
 async fn main() {
     let args = Cli::parse();
 
-    if let Some(start_folder) = args.find {
+    if args.info {
+        info::get_info();
+    } else if let Some(start_folder) = args.find {
         let mut found: u32 = 0;
         let mut action = |path: PathBuf| {
             if let Ok(metadata) = fs::metadata(&path) {
@@ -61,6 +67,12 @@ async fn main() {
     } else if let Some(config_path) = args.file {
         let mut logger = Logger::new();
         log!(logger, "{} {}", "Loading:".bright_black(), &config_path);
+        log!(
+            logger,
+            "{} {}",
+            "Timestamp:".bright_black(),
+            Utc::now().timestamp()
+        );
         let config = config::load(&config_path);
         match Repository::open(".") {
             Ok(repo) => {
