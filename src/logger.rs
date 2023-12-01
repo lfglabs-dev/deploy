@@ -135,28 +135,40 @@ impl Logger {
         let mut reader = EventStream::new();
         loop {
             tokio::select! {
-                Some(Ok(event)) = reader.next().fuse() => {
-                    if event == Event::Key(KeyCode::Esc.into()) {
-                        execute!(
-                            stdout(),
-                            MoveUp(1),
-                            Clear(ClearType::CurrentLine),
-                            SetForegroundColor(Color::Green),
-                            Print("Remote console: "),
-                            SetForegroundColor(Color::Reset),
-                            Print("finished\n"),
-                            MoveToColumn(0),
-                        )
-                        .unwrap();
-                        break;
-                    }
+                msg = reader.next().fuse() => match msg {
+                    Some(Ok(event)) => {
+                        if event == Event::Key(KeyCode::Esc.into()) {
+                            execute!(
+                                stdout(),
+                                MoveUp(1),
+                                Clear(ClearType::CurrentLine),
+                                SetForegroundColor(Color::Green),
+                                Print("Remote console: "),
+                                SetForegroundColor(Color::Reset),
+                                Print("finished\n"),
+                                MoveToColumn(0),
+                            )
+                            .unwrap();
+                            break;
+                        }
+                    },
+                    None => break,
+                    _ => {},
                 },
-                Some(Ok(next_line)) = stdout_reader.next().fuse() => {
-                    update_console(Arc::clone(&self.remote_buffer), next_line);
+                next_line = stdout_reader.next().fuse() => match next_line {
+                    Some(Ok(next_line)) => {
+                        update_console(Arc::clone(&self.remote_buffer), next_line);
+                    },
+                    None => break,
+                    _ => {},
                 },
-                Some(Ok(next_line)) = stderr_reader.next().fuse() => {
-                    update_console(Arc::clone(&self.remote_buffer), next_line);
-                }
+                next_line = stderr_reader.next().fuse() => match next_line {
+                    Some(Ok(next_line)) => {
+                        update_console(Arc::clone(&self.remote_buffer), next_line);
+                    },
+                    None => break,
+                    _ => {},
+                },
             }
         }
 
