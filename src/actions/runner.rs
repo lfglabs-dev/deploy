@@ -7,9 +7,10 @@ use crate::{
 };
 use chrono::Duration;
 use colored::Colorize;
-use openssh_sftp_client::Sftp;
+use russh::Disconnect;
 use std::collections::HashSet;
 use tokio::time::Instant;
+use russh_sftp::client::SftpSession;
 
 pub async fn execute_actions(logger: &mut Logger, config: Config, skip: HashSet<String>) {
     let start_time = Instant::now();
@@ -21,7 +22,10 @@ pub async fn execute_actions(logger: &mut Logger, config: Config, skip: HashSet<
                 }
                 let session = create_ssh_session(&config).await;
                 send_command(&mut *logger, &session, commands).await;
-                session.close().await.expect("Failed to close ssh session");
+                session
+                    .disconnect(Disconnect::ByApplication, "", "English")
+                    .await
+                    .expect("Failed to close ssh session");
             }
             Action::Upload {
                 name,
@@ -32,9 +36,10 @@ pub async fn execute_actions(logger: &mut Logger, config: Config, skip: HashSet<
                     continue;
                 }
                 let session = create_ssh_session(&config).await;
-                let mut sftp = Sftp::from_session(session, Default::default())
-                    .await
-                    .expect("Unable to connect in SFTP");
+
+                let channel = session.channel_open_session().await.unwrap();
+                channel.request_subsystem(true, "sftp").await.unwrap();
+                let mut sftp = SftpSession::new(channel.into_stream()).await.expect("Unable to connect in SFTP");
                 upload(
                     &config,
                     &mut *logger,

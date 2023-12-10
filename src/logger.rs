@@ -10,6 +10,8 @@ use crossterm::{
 use futures::{future::FutureExt, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
+use russh::{client, Channel, ChannelMsg};
+use std::str;
 use std::{
     collections::VecDeque,
     fs::{self, OpenOptions},
@@ -17,8 +19,6 @@ use std::{
     path::Path,
     sync::{Arc, Mutex},
 };
-
-use tokio_util::codec::{FramedRead, LinesCodec};
 
 pub const REMOTE_TERM_SIZE: usize = 5;
 
@@ -122,15 +122,19 @@ impl Logger {
         }
     }
 
-    pub async fn start_remote_logging(&mut self, mut command: openssh::Child<&openssh::Session>) {
-        let mut stdout_reader = FramedRead::new(
-            command.stdout().take().expect("Failed to open stdout"),
-            LinesCodec::new(),
-        );
-        let mut stderr_reader = FramedRead::new(
-            command.stderr().take().expect("Failed to open stderr"),
-            LinesCodec::new(),
-        );
+    pub async fn start_remote_logging(&mut self, mut channel: Channel<client::Msg>) {
+        execute!(
+            stdout(),
+            Clear(ClearType::CurrentLine),
+            SetForegroundColor(Color::DarkGrey),
+            Print("Remote console: "),
+            SetForegroundColor(Color::Reset),
+            Print("loading"),
+            Print("\n"),
+            MoveToColumn(0),
+        )
+        .unwrap();
+
         enable_raw_mode().unwrap();
         let mut reader = EventStream::new();
         loop {
@@ -155,19 +159,22 @@ impl Logger {
                     None => break,
                     _ => {},
                 },
-                next_line = stdout_reader.next().fuse() => match next_line {
-                    Some(Ok(next_line)) => {
-                        update_console(Arc::clone(&self.remote_buffer), next_line);
+                channel_msg = channel.wait() => match channel_msg {
+                    Some(next_msg) => {
+                        match next_msg {
+                            ChannelMsg::Data { ref data } => {
+                                let bytes = data.as_ref();
+                                let next_line = (str::from_utf8(bytes).expect("Invalid UTF-8")).trim_end();
+                                update_console(Arc::clone(&self.remote_buffer), next_line.to_string());
+                            }
+                            ChannelMsg::ExitStatus { exit_status : _ } => {
+                                // println!("Exit status: {}", exit_status);
+                                break;
+                            }
+                            _ => {}
+                        }
                     },
                     None => break,
-                    _ => {},
-                },
-                next_line = stderr_reader.next().fuse() => match next_line {
-                    Some(Ok(next_line)) => {
-                        update_console(Arc::clone(&self.remote_buffer), next_line);
-                    },
-                    None => break,
-                    _ => {},
                 },
             }
         }

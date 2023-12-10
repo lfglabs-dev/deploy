@@ -1,27 +1,28 @@
 [server]
-host = "ssh://146.59.159.230"
+host = "146.59.159.230"
+port = 22
 user = "ubuntu"
 ssh_key = "~/.ssh/termius"
 
-[[actions]]
-type = "commands"
-name = "stop"
-commands = [
-    "ls",
-]
-
-[[actions]]
-type = "commands"
-name = "stop"
-commands = [
-    "echo 'toto'",
-]
+# [[actions]]
+# type = "commands"
+# name = "stop"
+# commands = [
+#     "for i in $(seq 1 10); do echo \"hello\"; sleep 5; done",
+# ]
 
 # [[actions]]
-# type = "upload"
-# name = "upload_sources"
-# source_folder = "~/starknetid/api.starknet.id/"
-# target_folder = "~/api.starknet.id/"
+# type = "commands"
+# name = "stop"
+# commands = [
+#     "echo 'toto'",
+# ]
+
+[[actions]]
+type = "upload"
+name = "upload_sources"
+source_folder = "~/starknetid/api.starknet.id/"
+target_folder = "~/toto/"
 
 # [[actions]]
 # type = "upload"

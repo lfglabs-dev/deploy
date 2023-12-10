@@ -3,20 +3,24 @@ use crate::{config::Config, log};
 use async_std::fs::File;
 use async_std::io::ReadExt;
 use colored::*;
-use crossterm::cursor::{MoveToColumn, MoveUp};
-use crossterm::terminal::Clear;
+use crossterm::style::{Color, Print, SetForegroundColor};
 use crossterm::terminal::ClearType::CurrentLine;
+use crossterm::terminal::{Clear, ClearType};
 use crossterm::ExecutableCommand;
+use crossterm::{
+    cursor::{MoveToColumn, MoveUp},
+    execute,
+};
 use dirs_next::home_dir;
 use ignore::WalkBuilder;
-use openssh_sftp_client::fs::Fs;
-use openssh_sftp_client::Sftp;
+use russh_sftp::client::SftpSession;
 use std::future::Future;
-use std::io::{stdout, Error, Write};
+use std::io::{stdout, Error, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use tokio::io::AsyncWriteExt;
 
-fn expand_user_path(user_path: &str) -> String {
+pub fn expand_user_path(user_path: &str) -> String {
     if user_path.starts_with("~/") {
         user_path.replacen(
             "~",
@@ -38,36 +42,38 @@ fn expand_server_path(server_path: &str, username: &str) -> String {
 
 const CHUNK_SIZE: usize = 8 * 1024;
 
-async fn ensure_directory_exists(fs: &mut Fs, file_path: &PathBuf) -> Result<(), Error> {
+async fn ensure_directory_exists(sftp: &mut SftpSession, file_path: &PathBuf) -> Result<(), Error> {
     if let Some(parent_path) = file_path.parent() {
-        create_dir_recursive(fs, parent_path.to_path_buf()).await
+        create_dir_recursive(sftp, parent_path.to_path_buf()).await
     } else {
-        Err(Error::new(
-            std::io::ErrorKind::NotFound,
-            "No parent directory found",
-        ))
+        Err(Error::new(ErrorKind::NotFound, "No parent directory found"))
     }
 }
 
 fn create_dir_recursive<'a>(
-    fs: &'a mut Fs,
+    sftp: &'a mut SftpSession,
     dir_path: PathBuf,
 ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + 'a>> {
     Box::pin(async move {
         if let Some(parent) = dir_path.parent() {
-            create_dir_recursive(fs, parent.to_path_buf()).await?;
+            create_dir_recursive(sftp, parent.to_path_buf()).await?;
         }
 
-        // Here, you may need to adjust the error handling based on the actual API of openssh_sftp_client
-        match fs.metadata(&dir_path).await {
-            Ok(_) => Ok(()), // Directory exists, nothing to do
-            Err(_) => match fs.create_dir(&dir_path).await {
-                Ok(_) => Ok(()),
-                Err(_) => Err(Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to create directory",
-                )),
-            },
+        match sftp.try_exists(dir_path.to_string_lossy()).await {
+            Ok(exists) => {
+                if !exists {
+                    match sftp.create_dir(dir_path.to_string_lossy()).await {
+                        Ok(_) => Ok(()),
+                        Err(_) => Err(Error::new(ErrorKind::Other, "Failed to create directory")),
+                    }
+                } else {
+                    Ok(())
+                }
+            }
+            Err(_) => Err(Error::new(
+                ErrorKind::Other,
+                "Failed to check if directory exists",
+            )),
         }
     })
 }
@@ -100,7 +106,7 @@ fn progress_str(progress: f64) -> String {
 pub async fn upload(
     config: &Config,
     logger: &mut Logger,
-    sftp: &mut Sftp,
+    sftp: &mut SftpSession,
     source_folder: &String,
     target_folder: &String,
 ) {
@@ -119,12 +125,21 @@ pub async fn upload(
     let mut builder = WalkBuilder::new(&source_folder);
     builder.standard_filters(false);
     if ignore_path.exists() {
-        println!(
-            "{}{}{}",
-            "Found: '".bright_black(),
-            ignore_path.to_str().unwrap(),
-            "'".bright_black()
-        );
+        execute!(
+            stdout(),
+            Clear(ClearType::CurrentLine),
+            SetForegroundColor(Color::Black),
+            Print("Found: '"),
+            SetForegroundColor(Color::Reset),
+            Print(ignore_path.to_str().unwrap()),
+            SetForegroundColor(Color::Black),
+            Print("'"),
+            SetForegroundColor(Color::Reset),
+            Print("\n"),
+            MoveToColumn(0),
+        )
+        .unwrap();
+
         builder.add_ignore(ignore_path);
     }
 
@@ -145,7 +160,7 @@ pub async fn upload(
                         relative_path.display().to_string().bright_black()
                     );
 
-                    if let Err(err) = ensure_directory_exists(&mut sftp.fs(), &target_path).await {
+                    if let Err(err) = ensure_directory_exists(sftp, &target_path).await {
                         rewrite(format!(
                             "{} Failed to ensure directory exists: {}",
                             "Error:".bright_red(),
@@ -153,7 +168,7 @@ pub async fn upload(
                         ))
                     }
 
-                    match sftp.create(&target_path).await {
+                    match sftp.create(target_path.as_path().to_string_lossy()).await {
                         Ok(mut target_file) => {
                             // Open the source file
                             if let Ok(mut source_file) = File::open(&path).await {

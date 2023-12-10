@@ -12,6 +12,7 @@ macro_rules! pub_struct {
 
 pub_struct!(Clone, Deserialize; Server {
     host: String,
+    port : u16,
     user: String,
     ssh_key: String,
 });
