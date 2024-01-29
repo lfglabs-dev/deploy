@@ -165,7 +165,25 @@ impl Logger {
                             ChannelMsg::Data { ref data } => {
                                 let bytes = data.as_ref();
                                 let next_line = (str::from_utf8(bytes).expect("Invalid UTF-8")).trim_end();
-                                update_console(Arc::clone(&self.remote_buffer), next_line.to_string());
+                                execute!(
+                                    stdout(),
+                                    MoveUp(1),
+                                    Clear(ClearType::CurrentLine),
+                                    SetForegroundColor(Color::DarkGrey),
+                                    Print("$ "),
+                                    SetForegroundColor(Color::Reset),
+                                    Print(next_line),
+                                    Print("\n"),
+                                    MoveToColumn(0),
+                                    Clear(ClearType::CurrentLine),
+                                    SetForegroundColor(Color::DarkGrey),
+                                    Print("Remote console: "),
+                                    SetForegroundColor(Color::Reset),
+                                    Print("Press ESC to quit"),
+                                    Print("\n"),
+                                    MoveToColumn(0),
+                                )
+                                .unwrap();
                             }
                             ChannelMsg::ExitStatus { exit_status : _ } => {
                                 // println!("Exit status: {}", exit_status);
@@ -189,43 +207,6 @@ impl Logger {
         // Clear buffer
         self.remote_buffer = Arc::new(Mutex::new(VecDeque::new()));
     }
-}
-
-fn update_console(buffer: Arc<Mutex<VecDeque<String>>>, new_line: String) {
-    let mut accessible_buffer = buffer.lock().unwrap();
-    let prev_buffer_length: u16 = accessible_buffer.len().try_into().unwrap();
-    if accessible_buffer.len() == REMOTE_TERM_SIZE.into() {
-        accessible_buffer.pop_front();
-    }
-    let mut stdout_writer = stdout();
-    accessible_buffer.push_back(new_line);
-    execute!(stdout_writer, MoveUp(prev_buffer_length + 1)).unwrap();
-    for line in accessible_buffer.iter() {
-        stdout_writer
-            .execute(Clear(ClearType::CurrentLine))
-            .unwrap();
-        stdout_writer
-            .execute(SetForegroundColor(Color::DarkGrey))
-            .unwrap();
-        stdout_writer.execute(Print("$ ")).unwrap();
-        stdout_writer
-            .execute(SetForegroundColor(Color::Reset))
-            .unwrap();
-        stdout_writer.execute(Print(line)).unwrap();
-        stdout_writer.execute(Print("\n")).unwrap();
-        stdout_writer.execute(MoveToColumn(0)).unwrap();
-    }
-    execute!(
-        stdout_writer,
-        Clear(ClearType::CurrentLine),
-        SetForegroundColor(Color::DarkGrey),
-        Print("Remote console: "),
-        SetForegroundColor(Color::Reset),
-        Print("Press ESC to quit"),
-        Print("\n"),
-        MoveToColumn(0),
-    )
-    .unwrap();
 }
 
 #[macro_export]
